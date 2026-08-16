@@ -1,7 +1,7 @@
 package navigation
 
 import (
-	"github.com/k-wrk/cider-cli/tui/scanners"
+	"github.com/k-wrk/cinder/tui/scanners"
 
 	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/spinner"

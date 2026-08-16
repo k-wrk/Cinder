@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/k-wrk/cider-cli/tui"
+	"github.com/k-wrk/cinder/tui"
 
 	tea "github.com/charmbracelet/bubbletea"
 )

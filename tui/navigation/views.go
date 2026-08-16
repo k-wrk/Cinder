@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/k-wrk/cider-cli/tui/scanners"
+	"github.com/k-wrk/cinder/tui/scanners"
 
 	"github.com/charmbracelet/lipgloss"
 )

@@ -1,4 +1,4 @@
-module github.com/k-wrk/cider-cli
+module github.com/k-wrk/cinder
 
 go 1.25.0
 

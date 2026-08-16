@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/k-wrk/cider-cli/tui/scanners"
+	"github.com/k-wrk/cinder/tui/scanners"
 
 	tea "github.com/charmbracelet/bubbletea"
 )

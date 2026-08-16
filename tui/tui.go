@@ -1,7 +1,7 @@
 package tui
 
 import (
-	"github.com/k-wrk/cider-cli/tui/navigation"
+	"github.com/k-wrk/cinder/tui/navigation"
 
 	tea "github.com/charmbracelet/bubbletea"
 )

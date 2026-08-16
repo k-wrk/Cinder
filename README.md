@@ -51,7 +51,7 @@ mv cinder ~/.local/bin/
 ### Method 3: Direct Installation via Go
 If you have Go installed on your machine, you can download, compile, and install the latest version of the binary directly without manually downloading or cloning the code:
 ```bash
-go install github.com/k-wrk/cider-cli/cmd/cinder@latest
+go install github.com/k-wrk/cinder/cmd/cinder@latest
 ```
 *(Make sure `~/go/bin` is in your system's `$PATH`)*.
 

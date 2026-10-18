@@ -35,7 +35,7 @@ An interactive terminal utility written in Rust to inspect disk space, analyze c
 
 ```bash
 brew tap k-wrk/tap
-brew install cinder
+brew install k-wrk/tap/cinder
 ```
 
 ### From Source (Cargo)

@@ -312,8 +312,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let dry_run = args.iter().any(|a| a == "--dry-run" || a == "-n" || a == "--dry");
 
     if args.iter().any(|a| a == "--help" || a == "-h") {
-        println!("Cinder CLI (Rust)");
-        println!("Usage: cinder [OPTIONS]\n");
+        println!("Cinder CLI is an interactive terminal utility written in Rust to inspect disk space, analyze caches, and safely clean accumulated system data on macOS using Ratatui and Crossterm.");
+        println!("\nUsage: cinder [OPTIONS]\n");
         println!("Options:");
         println!("  -n, --dry-run, --dry   Run in simulation mode (does not delete or modify any files)");
         println!("  -h, --help             Print help information");

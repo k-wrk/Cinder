@@ -11,9 +11,8 @@ branch = "main"
 
 [build]
 type = "cargo"
-build_dependencies = [
-    "rust",
-]
+dependencies = []
+build_dependencies = ["rust"]
 
 [hooks]
 files = ["Cargo.toml"]

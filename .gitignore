@@ -18,3 +18,8 @@
 *.prof
 /vendor/
 /cinder
+
+# Rust
+/target/
+**/target/
+Cargo.lock

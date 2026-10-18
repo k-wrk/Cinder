@@ -1,96 +1,103 @@
-# Cinder CLI
+# Cinder
 
-> **Interactive Terminal Utility for macOS Disk Cleanup.**
-
-**Cinder CLI** is a console tool written in **Go** using the **Charm** ecosystem (`bubbletea`, `lipgloss`, and `bubbles`). It was designed to help you free up **System Data** space and organize your **Documents** directory in a 100% safe and interactive way.
-
-## Quick Installation
-
-To install **Cinder CLI** via Homebrew, run:
-
-```bash
-brew tap k-wrk/tap
-brew install k-wrk/tap/cinder
-```
+An interactive terminal utility written in Rust to inspect disk space, analyze caches, and safely clean accumulated system data on macOS using Ratatui and Crossterm.
 
 ---
 
-## Key Features
+## Features
 
-* **Safe Cleanup (No Data Loss):**
-  * Instead of using the destructive `rm -rf`, all selected files and directories are **moved to the macOS Trash (`~/.Trash`)** so that you can restore them if needed.
-  * **Smart Whitelist:** Strict protection based on keywords and application signatures prevents the removal of active system containers or well-known applications (such as Microsoft Office, Docker, Adobe, Slack, etc.).
-* **Smart App Suggestions:** Maps applications occupying more than 50MB of disk space that haven't been opened for more than 30 days (or have never been opened!), displaying their size and inactivity duration.
-* **Paginated Documents Report:** Lists the 50 largest files in your `~/Documents` folder, organized in pages of 10 items.
-* **Local Time Machine Snapshot Deletion:** Integrated, interactive deletion of temporary local disk backups (one of the biggest culprits of *System Data* bloat) with administrator privileges.
-* **Developer Caches Cleanup:** Scans and cleans gigabytes of storage accumulated by compilers and package managers such as **Xcode (iOS DeviceSupport, Simulators, and Archives), Go (Modules and Build Cache), Cargo (Rust registry/git), Python (uv, pip, and Poetry), Yarn, npm, JetBrains IDEs, Android SDK, Hugging Face AI, Cypress, Phpactor, CocoaPods, and Homebrew**.
-* **General Caches & Logs Cleanup:** Interactive selection to clean everyday application caches and diagnostics, including **Apple Mail Downloads (attachments), Spotify Cache, Telegram Cache, Slack & Discord Caches, macOS Diagnostic/Crash Reports, and User Cache Logs**.
-* **Docker Clean:** Cleans up unused Docker containers, images, and volumes, and moves Docker Desktop virtual machine storage to the Trash to regain massive amounts of space.
-* **Ollama Models Management:** Lists installed Ollama models and tags, allowing you to move selected models along with their massive weight blobs directly to the Trash.
+- **Safe Trash Removal:** All deletions move files and directories to the macOS Trash (`~/.Trash`) rather than permanently deleting them with destructive commands.
+- **Top 50 Documents Report:** Paginated report identifying the largest files in `~/Documents`, with interactive selection to move them to Trash.
+- **Smart App Suggestions:** Maps applications larger than 50MB that have been inactive for over 30 days or never opened, with shortcut to reveal in Finder (`o`).
+- **Developer Caches Cleanup:** Scans caches accumulated by developer toolchains, including Xcode (DerivedData, Simulators, Archives), Cargo, Go build caches, Python (uv, pip, poetry), Gradle, npm, Yarn, CocoaPods, and Homebrew.
+- **Caches & Sandboxed Containers:** Safely inspects and clears user caches (Spotify, Slack, Discord, Telegram, Apple Mail Downloads, macOS crash logs) and orphan containers with smart whitelisting.
+- **Browser Caches:** Detects and cleans cache stores for Chrome, Arc, Brave, Safari, Firefox, Zen, and DuckDuckGo.
+- **Ollama Models & Hugging Face:** Inspects local model weights in `~/.ollama/models` and `~/.cache/huggingface`, allowing quick reclamation of tens of gigabytes.
+- **Docker Cleanup:** Inspects VM raw disk images (`Docker.raw`) and triggers `docker system prune` for unused containers, images, and volumes.
+- **Time Machine Local Snapshots:** Manages and purges local backup snapshots that consume System Data.
+- **Dry-Run Simulation:** Full simulation mode (`--dry-run`) to preview scans and cleanups without touching disk.
+
+---
+
+## Prerequisites
+
+1. **Operating System:** macOS (Apple Silicon or Intel)
+2. **Rust & Cargo:** (Rust 1.75+ recommended)
+   ```bash
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+   ```
 
 ---
 
 ## Installation
 
-To install **Cinder CLI** globally on your macOS system, you can use one of the following methods:
+### Via Homebrew (macOS)
 
-### Method 1: Using `just` (Recommended)
-Run the following command in the project root folder to automatically compile and install the utility to `~/.local/bin`:
 ```bash
-just install
+brew tap k-wrk/tap
+brew install cinder
 ```
 
-### Method 2: Manual Installation
-Build the executable and move it to a folder in your `$PATH` (like `~/.local/bin`):
+### From Source (Cargo)
+
+Clone the repository and compile the optimized release binary:
+
 ```bash
-go build -o cinder ./cmd/cinder
-mkdir -p ~/.local/bin
-mv cinder ~/.local/bin/
+git clone https://github.com/k-wrk/Cinder.git
+cd Cinder
+cargo build --release
 ```
 
-### Method 3: Direct Installation via Go
-If you have Go installed on your machine, you can download, compile, and install the latest version of the binary directly without manually downloading or cloning the code:
-```bash
-go install github.com/k-wrk/cinder/cmd/cinder@latest
-```
-*(Make sure `~/go/bin` is in your system's `$PATH`)*.
+To install the binary globally into your system path (`~/.cargo/bin/cinder`):
 
-Once installed, you can launch the interactive cleanup utility from anywhere in your terminal by running:
 ```bash
-cinder
+cargo install --path .
 ```
 
 ---
 
-## How to Build and Run
+## CLI Options
 
-This project uses [just](https://just.systems/) to facilitate project execution.
+| Flag | Short | Description | Default |
+| :--- | :--- | :--- | :--- |
+| `--dry-run` | `-n`, `--dry` | Run in simulation mode (skips trash operations and shell commands) | `false` |
+| `--help` | `-h` | Print help information | - |
 
-### Prerequisites
-* **macOS** Operating System
-* **Go** programming language installed (version 1.18 or higher)
-* **`just`** utility installed (optional, but highly recommended)
+---
 
-### Quick Commands:
+## Keybindings & Navigation
 
-* **Build and run the application immediately:**
-  ```bash
-  just run
-  ```
+| Key | Action |
+| :--- | :--- |
+| `↑` / `k` | Move cursor up |
+| `↓` / `j` | Move cursor down |
+| `←` / `p` | Previous page (in paginated lists) |
+| `→` / `n` | Next page (in paginated lists) |
+| `Space` | Toggle checkbox (Selection, Documents, Browsers, Application Support) |
+| `Enter` | Select menu option / Clean selected items / Confirm deletion |
+| `o` | Reveal selected application in Finder (in Apps report) |
+| `Esc` / `b` | Go back to previous screen or main menu |
+| `Ctrl + C` / `q` | Exit application safely |
 
-* **Only build the executable in the project root:**
-  ```bash
-  just build
-  ```
+---
 
-* **Remove the built binary from the root:**
-  ```bash
-  just clean
-  ```
+## Usage Examples
 
-* **Organize and download Go dependencies:**
-  ```bash
-  just tidy
-  ```
+### 1. Launch the interactive TUI
+```bash
+cinder
+```
 
-*(If you don't have `just` installed, you can build manually with the command: `go build -o cinder ./cmd/cinder` and execute it with `./cinder`)*.
+### 2. Run in Dry-Run mode (simulation without deletions)
+```bash
+cinder --dry-run
+```
+
+---
+
+## License
+
+Distributed under the **PolyForm Noncommercial License 1.0.0**.
+
+- Free for personal, academic, educational, and non-commercial research use.
+- Commercial use or use for commercial gain is **strictly prohibited** without prior written agreement.

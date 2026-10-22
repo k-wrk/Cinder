@@ -30,6 +30,8 @@ pub enum AppState {
     Browsers,
     ScanningDev,
     DevTools,
+    ScanningFonts,
+    Fonts,
     ScanningAppSupport,
     AppSupport,
     ScanningDocker,

@@ -36,6 +36,9 @@ pub fn render_ui(
     dev_items: &[scanners::devtools::DevItem],
     dev_cursor: usize,
     dev_page: usize,
+    font_items: &[scanners::fonts::FontItem],
+    font_cursor: usize,
+    font_page: usize,
     app_support_items: &[scanners::appsupport::AppSupportItem],
     app_support_cursor: usize,
     app_support_page: usize,
@@ -110,6 +113,9 @@ pub fn render_ui(
         dev_items,
         dev_cursor,
         dev_page,
+        font_items,
+        font_cursor,
+        font_page,
         app_support_items,
         app_support_cursor,
         app_support_page,
@@ -141,7 +147,8 @@ fn get_help_text(state: AppState) -> &'static str {
         AppState::HuggingFace => "↑/↓: Navigate • [Enter]: Move to Trash • [Esc/b]: Back",
         AppState::Ollama => "↑/↓: Navigate • [Enter]: Move to Trash • [Esc/b]: Back",
         AppState::Browsers => "↑/↓: Navigate • [Space]: Select • [Enter]: Clean Selected • [Esc/b]: Back",
-        AppState::DevTools => "↑/↓: Navigate • [Enter]: Clean • [Esc/b]: Back",
+        AppState::DevTools => "↑/↓: Navigate • [Space]: Toggle • [a]: Select All • [Enter]: Clean Selected • [Esc/b]: Back",
+        AppState::Fonts => "↑/↓: Navigate • [Space]: Toggle • [a]: Select All • [Enter]: Move to Trash • [Esc/b]: Back",
         AppState::AppSupport => "↑/↓: Navigate • [Space]: Select • [Enter]: Clean Selected • [Esc/b]: Back",
         AppState::Docker => "↑/↓: Navigate • [Enter]: Clean • [Esc/b]: Back",
         AppState::ConfirmTrash => "[S/Enter]: Yes, continue • [N/Esc/b]: Cancel and go back",
@@ -178,6 +185,9 @@ fn render_content(
     dev_items: &[scanners::devtools::DevItem],
     dev_cursor: usize,
     dev_page: usize,
+    font_items: &[scanners::fonts::FontItem],
+    font_cursor: usize,
+    font_page: usize,
     app_support_items: &[scanners::appsupport::AppSupportItem],
     app_support_cursor: usize,
     app_support_page: usize,
@@ -211,6 +221,9 @@ fn render_content(
         }
         AppState::ScanningDev => {
             render_spinner_view(f, area, spinner_char, "Scanning developer tool caches...");
+        }
+        AppState::ScanningFonts => {
+            render_spinner_view(f, area, spinner_char, "Scanning ~/Library/Fonts to analyze Nerd Fonts redundancy...");
         }
         AppState::ScanningAppSupport => {
             render_spinner_view(f, area, spinner_char, "Scanning Application Support caches and data...");
@@ -645,29 +658,127 @@ fn render_content(
                 for (idx, item) in dev_items[start..end].iter().enumerate() {
                     let is_current = dev_cursor == idx;
                     let cursor_str = if is_current { "> " } else { "  " };
-                    let content = format!("{:<50} {}", item.name, scanners::format_size(item.size));
+                    let checked_str = if item.selected { "x" } else { " " };
+                    let tag = format!("[{}]", item.action_type);
+                    let tag_style = if item.action_type.starts_with("CLI") {
+                        Style::default().fg(GREEN_THEME)
+                    } else {
+                        Style::default().fg(YELLOW_THEME)
+                    };
+
+                    let size_str = scanners::format_size(item.size);
 
                     if is_current {
                         list_lines.push(Line::from(vec![
                             Span::styled(cursor_str, Style::default().fg(CYAN_THEME).add_modifier(Modifier::BOLD)),
-                            Span::styled(content, Style::default().fg(CYAN_THEME).add_modifier(Modifier::BOLD)),
+                            Span::styled(format!(" [{}] ", checked_str), Style::default().fg(CYAN_THEME).add_modifier(Modifier::BOLD)),
+                            Span::styled(format!("{:<16} ", tag), tag_style.add_modifier(Modifier::BOLD)),
+                            Span::styled(format!("{:<42} ", item.name), Style::default().fg(CYAN_THEME).add_modifier(Modifier::BOLD)),
+                            Span::styled(size_str, Style::default().fg(CYAN_THEME).add_modifier(Modifier::BOLD)),
                         ]));
                     } else {
                         list_lines.push(Line::from(vec![
                             Span::raw(cursor_str),
-                            Span::styled(content, Style::default().fg(FG_THEME)),
+                            Span::styled(format!(" [{}] ", checked_str), Style::default().fg(FG_THEME)),
+                            Span::styled(format!("{:<16} ", tag), tag_style),
+                            Span::styled(format!("{:<42} ", item.name), Style::default().fg(FG_THEME)),
+                            Span::styled(size_str, Style::default().fg(GRAY_THEME)),
                         ]));
                     }
                 }
             }
 
+            let selected_count = dev_items.iter().filter(|it| it.selected).count();
+            let selected_size: u64 = dev_items.iter().filter(|it| it.selected).map(|it| it.size).sum();
+
+            let title = if selected_count > 0 {
+                format!(
+                    " DEVELOPER TOOLS CACHES ({} selected • {}) ",
+                    selected_count,
+                    scanners::format_size(selected_size)
+                )
+            } else {
+                " DEVELOPER TOOLS CACHES ".to_string()
+            };
+
             let box_block = Block::default()
-                .title(" DEVELOPER TOOLS CACHES ")
+                .title(title)
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(CYAN_THEME));
 
             let page_text = if total_pages > 1 {
                 format!("Page {} of {} (Items {}-{} of {})", dev_page + 1, total_pages, start + 1, end, dev_items.len())
+            } else {
+                String::new()
+            };
+
+            let layout = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Min(4),
+                    Constraint::Length(1),
+                ])
+                .split(area);
+
+            f.render_widget(Paragraph::new(list_lines).block(box_block), layout[0]);
+            f.render_widget(Paragraph::new(Line::from(Span::styled(page_text, Style::default().fg(YELLOW_THEME)))), layout[1]);
+        }
+        AppState::Fonts => {
+            let start = font_page * items_per_page;
+            let end = (start + items_per_page).min(font_items.len());
+            let total_pages = font_items.len().div_ceil(items_per_page);
+
+            let mut list_lines = Vec::new();
+            if font_items.is_empty() {
+                list_lines.push(Line::from(Span::styled("No custom fonts found in ~/Library/Fonts.", Style::default().fg(GRAY_THEME))));
+            } else {
+                for (idx, item) in font_items[start..end].iter().enumerate() {
+                    let is_current = font_cursor == idx;
+                    let cursor_str = if is_current { "> " } else { "  " };
+                    let checked_str = if item.selected { "x" } else { " " };
+                    let files_str = format!("{} files", item.count);
+                    let size_str = scanners::format_size(item.size);
+
+                    if is_current {
+                        list_lines.push(Line::from(vec![
+                            Span::styled(cursor_str, Style::default().fg(CYAN_THEME).add_modifier(Modifier::BOLD)),
+                            Span::styled(format!(" [{}] ", checked_str), Style::default().fg(CYAN_THEME).add_modifier(Modifier::BOLD)),
+                            Span::styled(format!("{:<40} ", item.family), Style::default().fg(CYAN_THEME).add_modifier(Modifier::BOLD)),
+                            Span::styled(format!("{:<15} ", files_str), Style::default().fg(YELLOW_THEME).add_modifier(Modifier::BOLD)),
+                            Span::styled(size_str, Style::default().fg(CYAN_THEME).add_modifier(Modifier::BOLD)),
+                        ]));
+                    } else {
+                        list_lines.push(Line::from(vec![
+                            Span::raw(cursor_str),
+                            Span::styled(format!(" [{}] ", checked_str), Style::default().fg(FG_THEME)),
+                            Span::styled(format!("{:<40} ", item.family), Style::default().fg(FG_THEME)),
+                            Span::styled(format!("{:<15} ", files_str), Style::default().fg(YELLOW_THEME)),
+                            Span::styled(size_str, Style::default().fg(GRAY_THEME)),
+                        ]));
+                    }
+                }
+            }
+
+            let selected_count = font_items.iter().filter(|it| it.selected).count();
+            let selected_size: u64 = font_items.iter().filter(|it| it.selected).map(|it| it.size).sum();
+
+            let title = if selected_count > 0 {
+                format!(
+                    " NERD FONTS OPTIMIZER ({} selected • {}) ",
+                    selected_count,
+                    scanners::format_size(selected_size)
+                )
+            } else {
+                " NERD FONTS OPTIMIZER (~/Library/Fonts) ".to_string()
+            };
+
+            let box_block = Block::default()
+                .title(title)
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(CYAN_THEME));
+
+            let page_text = if total_pages > 1 {
+                format!("Page {} of {} (Families {}-{} of {})", font_page + 1, total_pages, start + 1, end, font_items.len())
             } else {
                 String::new()
             };
@@ -787,26 +898,46 @@ fn render_content(
             f.render_widget(Paragraph::new(Line::from(Span::styled(page_text, Style::default().fg(YELLOW_THEME)))), layout[1]);
         }
         AppState::Cleaning => {
-            let status = Paragraph::new(Line::from(Span::styled(
-                "Safely cleaning selected components...\n",
-                Style::default().fg(GRAY_THEME).add_modifier(Modifier::ITALIC),
-            )));
+            let status = Paragraph::new(Line::from(vec![
+                Span::styled(format!("{} ", spinner_char), Style::default().fg(CYAN_THEME).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "Safely cleaning selected components...",
+                    Style::default().fg(FG_THEME).add_modifier(Modifier::BOLD),
+                ),
+            ]));
 
             let gauge = Gauge::default()
-                .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(PURPLE_THEME)))
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(PURPLE_THEME))
+                        .title(" PROGRESS "),
+                )
                 .gauge_style(Style::default().fg(CYAN_THEME).bg(PURPLE_THEME))
                 .percent((clean_percent * 100.0) as u16);
 
-            let layout = Layout::default()
+            // Left-aligned with aesthetic max width (64 columns)
+            let bar_width = 64.min(area.width.saturating_sub(2));
+
+            let h_layout = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Length(bar_width),
+                    Constraint::Min(1),
+                ])
+                .split(area);
+
+            let v_layout = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
                     Constraint::Length(2),
                     Constraint::Length(3),
+                    Constraint::Min(1),
                 ])
-                .split(area);
+                .split(h_layout[0]);
 
-            f.render_widget(status, layout[0]);
-            f.render_widget(gauge, layout[1]);
+            f.render_widget(status, v_layout[0]);
+            f.render_widget(gauge, v_layout[1]);
         }
         AppState::ConfirmTrash => {
             let title = Line::from(Span::styled(

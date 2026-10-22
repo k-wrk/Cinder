@@ -35,6 +35,7 @@ pub mod containers;
 pub mod devtools;
 pub mod docker;
 pub mod documents;
+pub mod fonts;
 pub mod huggingface;
 pub mod ollama;
 
@@ -107,4 +108,87 @@ pub fn move_to_trash<P: AsRef<Path>>(path: P, dry_run: bool) -> std::io::Result<
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::File;
+    use std::io::Write;
+
+    #[test]
+    fn test_format_size() {
+        assert_eq!(format_size(0), "0 B");
+        assert_eq!(format_size(500), "500 B");
+        assert_eq!(format_size(1023), "1023 B");
+        assert_eq!(format_size(1024), "1.00 KB");
+        assert_eq!(format_size(1536), "1.50 KB");
+        assert_eq!(format_size(1024 * 1024), "1.00 MB");
+        assert_eq!(format_size(1024 * 1024 * 1024 * 2), "2.00 GB");
+        assert_eq!(format_size(1024 * 1024 * 1024 * 1024 * 3), "3.00 TB");
+    }
+
+    #[test]
+    fn test_has_binary() {
+        // macOS standard system utilities must always exist
+        assert!(has_binary("sh"));
+        assert!(has_binary("ls"));
+        // Random non-existent command must return false
+        assert!(!has_binary("cinder_non_existent_binary_xyz_123"));
+    }
+
+    #[test]
+    fn test_move_to_trash_dry_run_preserves_file() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let file_path = tmp_dir.path().join("safe_test_file.txt");
+        {
+            let mut f = File::create(&file_path).unwrap();
+            f.write_all(b"Important data that must never be deleted in dry run").unwrap();
+        }
+
+        assert!(file_path.exists());
+        let res = move_to_trash(&file_path, true);
+        assert!(res.is_ok());
+        // In dry run, file must strictly remain on disk
+        assert!(file_path.exists());
+    }
+
+    #[test]
+    fn test_move_to_trash_dry_run_preserves_dir() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let sub_dir = tmp_dir.path().join("sub_folder");
+        fs::create_dir(&sub_dir).unwrap();
+        let inner_file = sub_dir.join("inner.txt");
+        fs::write(&inner_file, b"content").unwrap();
+
+        assert!(sub_dir.exists());
+        let res = move_to_trash(&sub_dir, true);
+        assert!(res.is_ok());
+        assert!(sub_dir.exists());
+        assert!(inner_file.exists());
+    }
+
+    #[test]
+    fn test_move_to_trash_non_existent_path() {
+        let path = Path::new("/path/that/definitely/does/not/exist/for/cinder_test");
+        let res = move_to_trash(path, false);
+        assert!(res.is_ok());
+    }
+
+    #[test]
+    fn test_dir_size() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let sub_dir = tmp_dir.path().join("nested");
+        fs::create_dir(&sub_dir).unwrap();
+
+        let file1 = tmp_dir.path().join("file1.bin");
+        let file2 = sub_dir.join("file2.bin");
+
+        // Write 100 bytes to file1 and 200 bytes to file2
+        fs::write(&file1, vec![0u8; 100]).unwrap();
+        fs::write(&file2, vec![0u8; 200]).unwrap();
+
+        let size = dir_size(tmp_dir.path());
+        assert!(size >= 300);
+    }
 }

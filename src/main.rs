@@ -20,13 +20,14 @@ use types::*;
 
 const MENU_OPTIONS: &[&str] = &[
     "Select and Clean Caches / Containers",
-    "Largest Files Report (~/Documents)",
+    "Largest Files Report (~/Documents, Downloads, Dumps)",
     "Delete Local Snapshots (Time Machine via Sudo)",
-    "App Uninstall Suggestions",
+    "App Uninstall Suggestions (Apps & Bulky Casks)",
     "Hugging Face Models & Cache",
     "Ollama Models",
     "Browser Caches & Data",
-    "Developer Tools Caches",
+    "Developer Tools Caches (Multi-select)",
+    "Nerd Fonts Optimizer (~/Library/Fonts)",
     "Application Support Caches & Data",
     "Docker Cleanup & Caches",
     "Open macOS Storage Settings",
@@ -43,9 +44,11 @@ enum AppEvent {
     OllamaFinished(Vec<scanners::ollama::OllamaItem>),
     BrowsersFinished(Vec<scanners::browsers::BrowserItem>),
     DevFinished(Vec<scanners::devtools::DevItem>),
+    FontsFinished(Vec<scanners::fonts::FontItem>),
     AppSupportFinished(Vec<scanners::appsupport::AppSupportItem>),
     DockerFinished(Vec<scanners::docker::DockerItem>),
     CleanItemDone(usize, u64),
+    CleanProgress(usize, usize, u64),
     CleanAllDone(u64),
 }
 
@@ -108,23 +111,13 @@ fn clean_orphan_containers(dry_run: bool) -> (String, Result<(), String>) {
     (msg, res.map_err(|e| e.to_string()))
 }
 
-fn clean_trash(dry_run: bool) -> (String, Result<(), String>) {
-    if dry_run {
-        return ("[DRY RUN] Would empty trash".to_string(), Ok(()));
-    }
+fn clean_thunderbird(dry_run: bool) -> (String, Result<(), String>) {
     let home = dirs::home_dir().unwrap_or_default();
-    let trash_dir = home.join(".Trash");
-    if let Ok(entries) = fs::read_dir(&trash_dir) {
-        for entry in entries.filter_map(|e| e.ok()) {
-            let p = entry.path();
-            if p.is_dir() {
-                let _ = fs::remove_dir_all(p);
-            } else {
-                let _ = fs::remove_file(p);
-            }
-        }
+    let tb_cache = home.join("Library/Caches/Thunderbird");
+    if tb_cache.exists() {
+        let _ = scanners::move_to_trash(tb_cache, dry_run);
     }
-    ("Trash emptied".to_string(), Ok(()))
+    ("Thunderbird cache cleared".to_string(), Ok(()))
 }
 
 fn initial_items() -> Vec<CleanupItem> {
@@ -217,13 +210,13 @@ fn initial_items() -> Vec<CleanupItem> {
             custom_clean: Some(clean_orphan_containers),
         },
         CleanupItem {
-            id: "trash".to_string(),
-            name: "Empty macOS Trash".to_string(),
-            path: home.join(".Trash"),
+            id: "thunderbird".to_string(),
+            name: "Thunderbird Email Caches".to_string(),
+            path: home.join("Library/Caches/Thunderbird"),
             size: 0,
             scanned: false,
             selected: true,
-            custom_clean: Some(clean_trash),
+            custom_clean: Some(clean_thunderbird),
         },
     ]
 }
@@ -392,6 +385,10 @@ async fn run_app<B: ratatui::backend::Backend>(
     let mut dev_cursor = 0;
     let mut dev_page = 0;
 
+    let mut font_items: Vec<scanners::fonts::FontItem> = Vec::new();
+    let mut font_cursor = 0;
+    let mut font_page = 0;
+
     let mut app_support_items: Vec<scanners::appsupport::AppSupportItem> = Vec::new();
     let mut app_support_cursor = 0;
     let mut app_support_page = 0;
@@ -460,6 +457,12 @@ async fn run_app<B: ratatui::backend::Backend>(
                     dev_cursor = 0;
                     state = AppState::DevTools;
                 }
+                AppEvent::FontsFinished(fonts) => {
+                    font_items = fonts;
+                    font_page = 0;
+                    font_cursor = 0;
+                    state = AppState::Fonts;
+                }
                 AppEvent::AppSupportFinished(app_support) => {
                     app_support_items = app_support;
                     app_support_page = 0;
@@ -501,8 +504,16 @@ async fn run_app<B: ratatui::backend::Backend>(
                         });
                     }
                 }
+                AppEvent::CleanProgress(current, total, current_freed) => {
+                    freed_size += current_freed;
+                    if total > 0 {
+                        clean_percent = (current as f64) / (total as f64);
+                    }
+                    state = AppState::Cleaning;
+                }
                 AppEvent::CleanAllDone(total_freed) => {
                     freed_size = total_freed;
+                    clean_percent = 1.0;
                     state = AppState::Finished;
                 }
             }
@@ -546,6 +557,7 @@ async fn run_app<B: ratatui::backend::Backend>(
             clamp_view(ollama_items.len(), &mut ollama_page, &mut ollama_cursor);
             clamp_view(browsers_items.len(), &mut browsers_page, &mut browsers_cursor);
             clamp_view(dev_items.len(), &mut dev_page, &mut dev_cursor);
+            clamp_view(font_items.len(), &mut font_page, &mut font_cursor);
             clamp_view(app_support_items.len(), &mut app_support_page, &mut app_support_cursor);
             clamp_view(docker_items.len(), &mut docker_page, &mut docker_cursor);
         }
@@ -579,6 +591,9 @@ async fn run_app<B: ratatui::backend::Backend>(
                 &dev_items,
                 dev_cursor,
                 dev_page,
+                &font_items,
+                font_cursor,
+                font_page,
                 &app_support_items,
                 app_support_cursor,
                 app_support_page,
@@ -714,6 +729,14 @@ async fn run_app<B: ratatui::backend::Backend>(
                                         });
                                     }
                                     8 => {
+                                        state = AppState::ScanningFonts;
+                                        let tx_c = tx.clone();
+                                        thread::spawn(move || {
+                                            let res = scanners::fonts::scan_fonts();
+                                            let _ = tx_c.send(AppEvent::FontsFinished(res));
+                                        });
+                                    }
+                                    9 => {
                                         state = AppState::ScanningAppSupport;
                                         let tx_c = tx.clone();
                                         thread::spawn(move || {
@@ -721,7 +744,7 @@ async fn run_app<B: ratatui::backend::Backend>(
                                             let _ = tx_c.send(AppEvent::AppSupportFinished(res));
                                         });
                                     }
-                                    9 => {
+                                    10 => {
                                         state = AppState::ScanningDocker;
                                         let tx_c = tx.clone();
                                         thread::spawn(move || {
@@ -729,11 +752,11 @@ async fn run_app<B: ratatui::backend::Backend>(
                                             let _ = tx_c.send(AppEvent::DockerFinished(res));
                                         });
                                     }
-                                    10 => {
+                                    11 => {
                                         let _ = Command::new("open").arg("x-apple.systempreferences:com.apple.settings.Storage").output();
                                         status_msg = "Settings opened successfully!".to_string();
                                     }
-                                    11 => return Ok(()),
+                                    12 => return Ok(()),
                                     _ => {}
                                 },
                                 _ => {}
@@ -880,20 +903,27 @@ async fn run_app<B: ratatui::backend::Backend>(
                                         .collect();
 
                                     previous_state = AppState::DocumentsReport;
+                                    let total_to_free: u64 = to_clean.iter().map(|f| f.size).sum();
                                     confirm_prompt = format!(
-                                        "Do you want to move the following files to the trash?\n\n- {}",
+                                        "Do you want to move the following {} file(s) ({}) to the trash?\n\n- {}",
+                                        to_clean.len(),
+                                        scanners::format_size(total_to_free),
                                         names.join("\n- ")
                                     );
 
                                     let tx_c = tx.clone();
                                     on_confirm_action = Some(Box::new(move || {
-                                        for it in to_clean {
-                                            let _ = scanners::move_to_trash(&it.path, dry_run);
-                                        }
-                                        // Rescan documents folder after moving
                                         thread::spawn(move || {
+                                            let total_items = to_clean.len();
+                                            let mut accumulated = 0;
+                                            for (idx, it) in to_clean.into_iter().enumerate() {
+                                                let _ = scanners::move_to_trash(&it.path, dry_run);
+                                                accumulated += it.size;
+                                                let _ = tx_c.send(AppEvent::CleanProgress(idx + 1, total_items, it.size));
+                                            }
                                             let res = scanners::documents::scan_documents();
                                             let _ = tx_c.send(AppEvent::ReportFinished(res));
+                                            let _ = tx_c.send(AppEvent::CleanAllDone(accumulated));
                                         });
                                         None
                                     }));
@@ -950,6 +980,7 @@ async fn run_app<B: ratatui::backend::Backend>(
                                         scanners::format_size(target_app.size)
                                     );
 
+                                    let target_size = target_app.size;
                                     on_confirm_action = Some(Box::new(move || {
                                         if !dry_run {
                                             // Attempt Finder osascript first, then fallback
@@ -962,7 +993,7 @@ async fn run_app<B: ratatui::backend::Backend>(
                                                 let _ = scanners::move_to_trash(&target_app.path, dry_run);
                                             }
                                         }
-                                        None
+                                        Some(AppEvent::CleanAllDone(target_size))
                                     }));
                                     state = AppState::ConfirmTrash;
                                 }
@@ -1008,9 +1039,10 @@ async fn run_app<B: ratatui::backend::Backend>(
                                         scanners::format_size(target_item.size)
                                     );
 
+                                    let target_size = target_item.size;
                                     on_confirm_action = Some(Box::new(move || {
                                         let _ = scanners::move_to_trash(&target_item.path, dry_run);
-                                        None
+                                        Some(AppEvent::CleanAllDone(target_size))
                                     }));
                                     state = AppState::ConfirmTrash;
                                 }
@@ -1056,9 +1088,10 @@ async fn run_app<B: ratatui::backend::Backend>(
                                         scanners::format_size(target_item.size)
                                     );
 
+                                    let target_size = target_item.size;
                                     on_confirm_action = Some(Box::new(move || {
                                         let _ = scanners::ollama::delete_ollama_model(&target_item.path, dry_run);
-                                        None
+                                        Some(AppEvent::CleanAllDone(target_size))
                                     }));
                                     state = AppState::ConfirmTrash;
                                 }
@@ -1117,22 +1150,29 @@ async fn run_app<B: ratatui::backend::Backend>(
                                 }
 
                                 if !to_clean.is_empty() {
+                                    let total_to_free: u64 = to_clean.iter().map(|it| it.size).sum();
                                     let names: Vec<String> = to_clean.iter().map(|it| it.name.clone()).collect();
                                     previous_state = AppState::Browsers;
                                     confirm_prompt = format!(
-                                        "Do you want to move the following browser caches to the trash?\n\n- {}",
+                                        "Do you want to move the following {} browser cache(s) ({}) to the trash?\n\n- {}",
+                                        to_clean.len(),
+                                        scanners::format_size(total_to_free),
                                         names.join("\n- ")
                                     );
 
                                     let tx_c = tx.clone();
                                     on_confirm_action = Some(Box::new(move || {
-                                        for it in to_clean {
-                                            let _ = scanners::move_to_trash(&it.path, dry_run);
-                                        }
-                                        // Trigger rescanning browsers
                                         thread::spawn(move || {
+                                            let total_items = to_clean.len();
+                                            let mut accumulated = 0;
+                                            for (idx, it) in to_clean.into_iter().enumerate() {
+                                                let _ = scanners::move_to_trash(&it.path, dry_run);
+                                                accumulated += it.size;
+                                                let _ = tx_c.send(AppEvent::CleanProgress(idx + 1, total_items, it.size));
+                                            }
                                             let res = scanners::browsers::scan_browsers();
                                             let _ = tx_c.send(AppEvent::BrowsersFinished(res));
+                                            let _ = tx_c.send(AppEvent::CleanAllDone(accumulated));
                                         });
                                         None
                                     }));
@@ -1166,23 +1206,175 @@ async fn run_app<B: ratatui::backend::Backend>(
                                     dev_cursor = 0;
                                 }
                             }
-                            KeyCode::Enter => {
+                            KeyCode::Char(' ') => {
                                 let item_idx = dev_page * items_per_page + dev_cursor;
                                 if item_idx < dev_items.len() {
-                                    let target_item = dev_items[item_idx].clone();
+                                    dev_items[item_idx].selected = !dev_items[item_idx].selected;
+                                }
+                            }
+                            KeyCode::Char('a') => {
+                                let all_selected = dev_items.iter().all(|it| it.selected);
+                                for it in &mut dev_items {
+                                    it.selected = !all_selected;
+                                }
+                            }
+                            KeyCode::Enter => {
+                                let mut to_clean: Vec<scanners::devtools::DevItem> = dev_items
+                                    .iter()
+                                    .filter(|it| it.selected)
+                                    .cloned()
+                                    .collect();
+
+                                if to_clean.is_empty() {
+                                    let item_idx = dev_page * items_per_page + dev_cursor;
+                                    if item_idx < dev_items.len() {
+                                        to_clean.push(dev_items[item_idx].clone());
+                                    }
+                                }
+
+                                if !to_clean.is_empty() {
+                                    let total_to_free: u64 = to_clean.iter().map(|it| it.size).sum();
+                                    let summary_lines: Vec<String> = to_clean
+                                        .iter()
+                                        .map(|it| {
+                                            format!(
+                                                "- [{}] {} ({})",
+                                                it.action_type,
+                                                it.name,
+                                                scanners::format_size(it.size)
+                                            )
+                                        })
+                                        .collect();
+
                                     previous_state = AppState::DevTools;
                                     confirm_prompt = format!(
-                                        "Do you want to clean/delete '{}' ({})?",
-                                        target_item.name,
-                                        scanners::format_size(target_item.size)
+                                        "Execute cleanup for the following {} item(s) (Total: {})?\n\n{}",
+                                        to_clean.len(),
+                                        scanners::format_size(total_to_free),
+                                        summary_lines.join("\n")
                                     );
 
+                                    let tx_c = tx.clone();
                                     on_confirm_action = Some(Box::new(move || {
-                                        if let Some(clean_fn) = target_item.custom_clean {
-                                            let _ = clean_fn(dry_run);
-                                        } else {
-                                            let _ = scanners::move_to_trash(&target_item.path, dry_run);
-                                        }
+                                        thread::spawn(move || {
+                                            let total_items = to_clean.len();
+                                            let mut accumulated = 0;
+                                            for (idx, it) in to_clean.into_iter().enumerate() {
+                                                let freed = if let Some(clean_fn) = it.custom_clean {
+                                                    let (_, res) = clean_fn(dry_run);
+                                                    if res.is_ok() { it.size } else { 0 }
+                                                } else {
+                                                    match scanners::move_to_trash(&it.path, dry_run) {
+                                                        Ok(_) => it.size,
+                                                        Err(_) => 0,
+                                                    }
+                                                };
+                                                accumulated += freed;
+                                                let _ = tx_c.send(AppEvent::CleanProgress(idx + 1, total_items, freed));
+                                            }
+                                            let res = scanners::devtools::scan_dev_tools();
+                                            let _ = tx_c.send(AppEvent::DevFinished(res));
+                                            let _ = tx_c.send(AppEvent::CleanAllDone(accumulated));
+                                        });
+                                        None
+                                    }));
+                                    state = AppState::ConfirmTrash;
+                                }
+                            }
+                            KeyCode::Esc | KeyCode::Char('b') => {
+                                state = AppState::MainMenu;
+                            }
+                            _ => {}
+                        },
+                        AppState::Fonts => match key.code {
+                            KeyCode::Up | KeyCode::Char('k') => {
+                                font_cursor = font_cursor.saturating_sub(1);
+                            }
+                            KeyCode::Down | KeyCode::Char('j') => {
+                                let start = font_page * items_per_page;
+                                let end = (start + items_per_page).min(font_items.len());
+                                let page_size = end - start;
+                                if page_size > 0 && font_cursor < page_size - 1 {
+                                    font_cursor += 1;
+                                }
+                            }
+                            KeyCode::Left | KeyCode::Char('p') => {
+                                if font_page > 0 {
+                                    font_page -= 1;
+                                    font_cursor = 0;
+                                }
+                            }
+                            KeyCode::Right | KeyCode::Char('n') => {
+                                let total_pages = font_items.len().div_ceil(items_per_page);
+                                if total_pages > 0 && font_page < total_pages - 1 {
+                                    font_page += 1;
+                                    font_cursor = 0;
+                                }
+                            }
+                            KeyCode::Char(' ') => {
+                                let item_idx = font_page * items_per_page + font_cursor;
+                                if item_idx < font_items.len() {
+                                    font_items[item_idx].selected = !font_items[item_idx].selected;
+                                }
+                            }
+                            KeyCode::Char('a') => {
+                                let all_selected = font_items.iter().all(|it| it.selected);
+                                for it in &mut font_items {
+                                    it.selected = !all_selected;
+                                }
+                            }
+                            KeyCode::Enter => {
+                                let mut to_clean: Vec<scanners::fonts::FontItem> = font_items
+                                    .iter()
+                                    .filter(|it| it.selected)
+                                    .cloned()
+                                    .collect();
+
+                                if to_clean.is_empty() {
+                                    let item_idx = font_page * items_per_page + font_cursor;
+                                    if item_idx < font_items.len() {
+                                        to_clean.push(font_items[item_idx].clone());
+                                    }
+                                }
+
+                                if !to_clean.is_empty() {
+                                    let total_to_free: u64 = to_clean.iter().map(|it| it.size).sum();
+                                    let summary_lines: Vec<String> = to_clean
+                                        .iter()
+                                        .map(|it| {
+                                            format!(
+                                                "- {} ({} files, {})",
+                                                it.family,
+                                                it.count,
+                                                scanners::format_size(it.size)
+                                            )
+                                        })
+                                        .collect();
+
+                                    previous_state = AppState::Fonts;
+                                    confirm_prompt = format!(
+                                        "Move the following {} font families (Total: {}) to macOS Trash?\n\n{}",
+                                        to_clean.len(),
+                                        scanners::format_size(total_to_free),
+                                        summary_lines.join("\n")
+                                    );
+
+                                    let tx_c = tx.clone();
+                                    on_confirm_action = Some(Box::new(move || {
+                                        thread::spawn(move || {
+                                            let total_items = to_clean.len();
+                                            let mut accumulated = 0;
+                                            for (idx, it) in to_clean.into_iter().enumerate() {
+                                                for file in it.files {
+                                                    let _ = scanners::move_to_trash(&file, dry_run);
+                                                }
+                                                accumulated += it.size;
+                                                let _ = tx_c.send(AppEvent::CleanProgress(idx + 1, total_items, it.size));
+                                            }
+                                            let res = scanners::fonts::scan_fonts();
+                                            let _ = tx_c.send(AppEvent::FontsFinished(res));
+                                            let _ = tx_c.send(AppEvent::CleanAllDone(accumulated));
+                                        });
                                         None
                                     }));
                                     state = AppState::ConfirmTrash;
@@ -1242,21 +1434,29 @@ async fn run_app<B: ratatui::backend::Backend>(
                                 }
 
                                 if !to_clean.is_empty() {
+                                    let total_to_free: u64 = to_clean.iter().map(|it| it.size).sum();
                                     let names: Vec<String> = to_clean.iter().map(|it| it.name.clone()).collect();
                                     previous_state = AppState::AppSupport;
                                     confirm_prompt = format!(
-                                        "Do you want to move the following Application Support directories to the trash?\n\n- {}",
+                                        "Do you want to move the following {} Application Support directorie(s) ({}) to the trash?\n\n- {}",
+                                        to_clean.len(),
+                                        scanners::format_size(total_to_free),
                                         names.join("\n- ")
                                     );
 
                                     let tx_c = tx.clone();
                                     on_confirm_action = Some(Box::new(move || {
-                                        for it in to_clean {
-                                            let _ = scanners::move_to_trash(&it.path, dry_run);
-                                        }
                                         thread::spawn(move || {
+                                            let total_items = to_clean.len();
+                                            let mut accumulated = 0;
+                                            for (idx, it) in to_clean.into_iter().enumerate() {
+                                                let _ = scanners::move_to_trash(&it.path, dry_run);
+                                                accumulated += it.size;
+                                                let _ = tx_c.send(AppEvent::CleanProgress(idx + 1, total_items, it.size));
+                                            }
                                             let res = scanners::appsupport::scan_app_support();
                                             let _ = tx_c.send(AppEvent::AppSupportFinished(res));
+                                            let _ = tx_c.send(AppEvent::CleanAllDone(accumulated));
                                         });
                                         None
                                     }));
@@ -1301,13 +1501,14 @@ async fn run_app<B: ratatui::backend::Backend>(
                                         scanners::format_size(target_item.size)
                                     );
 
+                                    let target_size = target_item.size;
                                     on_confirm_action = Some(Box::new(move || {
                                         if let Some(clean_fn) = target_item.custom_clean {
                                             let _ = clean_fn(dry_run);
                                         } else {
                                             let _ = scanners::move_to_trash(&target_item.path, dry_run);
                                         }
-                                        None
+                                        Some(AppEvent::CleanAllDone(target_size))
                                     }));
                                     state = AppState::ConfirmTrash;
                                 }
@@ -1319,69 +1520,14 @@ async fn run_app<B: ratatui::backend::Backend>(
                         },
                         AppState::ConfirmTrash => match key.code {
                             KeyCode::Char('y') | KeyCode::Char('s') | KeyCode::Enter => {
+                                clean_percent = 0.0;
+                                freed_size = 0;
+                                state = AppState::Cleaning;
+
                                 if let Some(action) = on_confirm_action.take() {
                                     if let Some(event) = action() {
                                         let _ = tx.send(event);
                                     }
-                                }
-
-                                if previous_state == AppState::Selection {
-                                    clean_percent = 0.0;
-                                    freed_size = 0;
-                                    state = AppState::Cleaning;
-                                } else if previous_state == AppState::HuggingFace {
-                                    let item_idx = hf_page * items_per_page + hf_cursor;
-                                    if item_idx < hf_items.len() {
-                                        hf_items.remove(item_idx);
-                                    }
-                                    if hf_cursor > 0 && hf_cursor >= hf_items.len().saturating_sub(hf_page * items_per_page) {
-                                        hf_cursor -= 1;
-                                    }
-                                    state = AppState::HuggingFace;
-                                } else if previous_state == AppState::Ollama {
-                                    let item_idx = ollama_page * items_per_page + ollama_cursor;
-                                    if item_idx < ollama_items.len() {
-                                        ollama_items.remove(item_idx);
-                                    }
-                                    if ollama_cursor > 0 && ollama_cursor >= ollama_items.len().saturating_sub(ollama_page * items_per_page) {
-                                        ollama_cursor -= 1;
-                                    }
-                                    state = AppState::Ollama;
-                                } else if previous_state == AppState::AppsSuggestions {
-                                    let item_idx = app_page * items_per_page + app_cursor;
-                                    if item_idx < app_suggestions.len() {
-                                        app_suggestions.remove(item_idx);
-                                    }
-                                    if app_cursor > 0 && app_cursor >= app_suggestions.len().saturating_sub(app_page * items_per_page) {
-                                        app_cursor -= 1;
-                                    }
-                                    state = AppState::AppsSuggestions;
-                                } else if previous_state == AppState::DevTools {
-                                    let item_idx = dev_page * items_per_page + dev_cursor;
-                                    if item_idx < dev_items.len() {
-                                        dev_items.remove(item_idx);
-                                    }
-                                    if dev_cursor > 0 && dev_cursor >= dev_items.len().saturating_sub(dev_page * items_per_page) {
-                                        dev_cursor -= 1;
-                                    }
-                                    state = AppState::DevTools;
-                                } else if previous_state == AppState::Docker {
-                                    let item_idx = docker_page * items_per_page + docker_cursor;
-                                    if item_idx < docker_items.len() {
-                                        docker_items.remove(item_idx);
-                                    }
-                                    if docker_cursor > 0 && docker_cursor >= docker_items.len().saturating_sub(docker_page * items_per_page) {
-                                        docker_cursor -= 1;
-                                    }
-                                    state = AppState::Docker;
-                                } else if previous_state == AppState::Browsers {
-                                    state = AppState::ScanningBrowsers;
-                                } else if previous_state == AppState::AppSupport {
-                                    state = AppState::ScanningAppSupport;
-                                } else if previous_state == AppState::DocumentsReport {
-                                    state = AppState::ScanningReport;
-                                } else {
-                                    state = previous_state;
                                 }
                             }
                             KeyCode::Char('n') | KeyCode::Esc | KeyCode::Char('b') => {

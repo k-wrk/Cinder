@@ -67,6 +67,31 @@ pub fn scan_apps() -> Vec<AppSuggestion> {
         }
     }
 
+    // Check Homebrew Casks that are bulky or orphan
+    let cask_dirs = [
+        PathBuf::from("/opt/homebrew/Caskroom"),
+        PathBuf::from("/usr/local/Caskroom"),
+    ];
+    for c_dir in cask_dirs {
+        if let Ok(entries) = fs::read_dir(&c_dir) {
+            for entry in entries.filter_map(|e| e.ok()) {
+                let name = entry.file_name().to_string_lossy().to_string();
+                let p = entry.path();
+                let size = dir_size(&p);
+                // Flag large casks (>500MB) such as flutter, android-ndk, etc.
+                if size > 500 * 1024 * 1024 {
+                    list.push(AppSuggestion {
+                        name: format!("Homebrew Cask: {}", name),
+                        path: p,
+                        size,
+                        last_used: None,
+                        never_used: true,
+                    });
+                }
+            }
+        }
+    }
+
     list.sort_by(|a, b| b.size.cmp(&a.size));
     list
 }
